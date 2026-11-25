@@ -1,0 +1,125 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows: [CI]
+    branches: [main]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Commit on main with successful push CI (defaults to the current main commit)
+        type: string
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release Please
+    if: >-
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      sha: ${{ steps.authorize.outputs.sha }}
+      publish: ${{ steps.merged.outputs.publish }}
+    steps:
+      - name: Verify CI for the commit
+        id: authorize
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APPROVED_SHA: ${{ github.event.workflow_run.head_sha || inputs.sha || github.sha }}
+        run: |
+          if [[ ! "$APPROVED_SHA" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "::error::Use a full commit SHA from main."
+            exit 1
+          fi
+          gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yaml/runs" \
+            -f branch=main -f event=push -f status=success -f head_sha="$APPROVED_SHA" \
+            --jq '.total_count' | grep -Eq '^[1-9][0-9]*$'
+          main_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          if [[ "$main_sha" == "$APPROVED_SHA" ]]; then
+            echo 'current=true' >> "$GITHUB_OUTPUT"
+          fi
+          echo "sha=$APPROVED_SHA" >> "$GITHUB_OUTPUT"
+      - name: Check the release token
+        id: token
+        if: steps.authorize.outputs.current == 'true'
+        env:
+          RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: |
+          if [[ -z "$RELEASE_PLEASE_TOKEN" ]]; then
+            echo "::warning::Set the RELEASE_PLEASE_TOKEN repository secret to enable Release Please."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        if: steps.authorize.outputs.current == 'true' && steps.token.outputs.configured == 'true'
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          target-branch: main
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+      - name: Identify a merged Release Please PR
+        id: merged
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APPROVED_SHA: ${{ steps.authorize.outputs.sha }}
+        run: |
+          pulls="$(gh api "repos/$GITHUB_REPOSITORY/commits/$APPROVED_SHA/pulls?per_page=100")"
+          if jq -e --arg sha "$APPROVED_SHA" --arg repo "$GITHUB_REPOSITORY" '
+            any(.[]; .merged_at != null
+              and .merge_commit_sha == $sha
+              and .base.ref == "main"
+              and .head.repo.full_name == $repo
+              and (.head.ref == "release-please--branches--main"
+                or (.head.ref | startswith("release-please--branches--main--components--"))))
+          ' <<< "$pulls" >/dev/null; then
+            echo 'publish=true' >> "$GITHUB_OUTPUT"
+          fi
+
+  publish:
+    name: Publish npm packages
+    needs: release
+    if: needs.release.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    environment: npm
+    env:
+      HUSKY: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Pack packages tagged at the CI-verified commit
+        run: node scripts/npm-release.mjs pack "$RUNNER_TEMP/cairul-release"
+      - name: Publish to the npm registry
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_ACCESS: ${{ vars.NPM_ACCESS || 'public' }}
+        run: |
+          npm view '@cairul/plugin-kit@>=0.1.0 <1.0.0' version --json | jq -e 'type == "string" or (type == "array" and length > 0)' >/dev/null
+          node scripts/npm-release.mjs publish "$RUNNER_TEMP/cairul-release"

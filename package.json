@@ -10,7 +10,17 @@
     "node": ">=24"
   },
   "dependencies": {
-    "@cairul/plugin-kit": "workspace:^"
+    "@cairul/plugin-kit": ">=0.1.0 <1.0.0"
   },
-  "license": "Apache-2.0"
+  "license": "Apache-2.0",
+  "description": "Cairul checks for youtrack.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CairulMCP/cairul-youtrack-plugin.git"
+  },
+  "scripts": {
+    "build": "node --check index.mjs",
+    "test": "node --test"
+  },
+  "packageManager": "pnpm@12.21.0"
 }

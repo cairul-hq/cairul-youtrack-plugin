@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Check for a published plugin kit
+        id: kit
+        run: |
+          npm view '@cairul/plugin-kit@>=0.1.0 <1.0.0' version --json > "$RUNNER_TEMP/kit.json" 2> "$RUNNER_TEMP/kit.err" || {
+            if grep -q 'E404' "$RUNNER_TEMP/kit.err"; then exit 0; fi
+            cat "$RUNNER_TEMP/kit.err" >&2
+            exit 1
+          }
+          if jq -e 'type == "string" or (type == "array" and length > 0)' "$RUNNER_TEMP/kit.json" >/dev/null; then
+            echo 'published=true' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.kit.outputs.published != 'true'
+        with:
+          repository: CairulMCP/cairul
+          ref: '49db9ba9ab2edee5c5800b7559c3f0711c24a848'
+          path: .cairul-ci/core
+          sparse-checkout: packages/plugin-kit
+          persist-credentials: false
+      - name: Install dependencies
+        env:
+          KIT_PUBLISHED: ${{ steps.kit.outputs.published }}
+        run: |
+          if [[ "$KIT_PUBLISHED" == 'true' ]]; then
+            npm install --ignore-scripts --no-package-lock
+          else
+            archive="$(npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP" ./.cairul-ci/core/packages/plugin-kit)"
+            npm install --ignore-scripts --no-save --no-package-lock "$RUNNER_TEMP/$archive"
+          fi
+      - run: npm run build
+      - run: npm test
+      - run: node scripts/npm-release.mjs verify
+      - run: npm pack --dry-run --ignore-scripts
