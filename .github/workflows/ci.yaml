@@ -22,33 +22,33 @@ jobs:
         with:
           node-version: '24'
           package-manager-cache: false
-      - name: Check for a published plugin kit
-        id: kit
+      - name: Check for a published PDK
+        id: pdk
         run: |
-          npm view '@cairul/plugin-kit@>=0.1.0 <1.0.0' version --json > "$RUNNER_TEMP/kit.json" 2> "$RUNNER_TEMP/kit.err" || {
-            if grep -q 'E404' "$RUNNER_TEMP/kit.err"; then exit 0; fi
-            cat "$RUNNER_TEMP/kit.err" >&2
+          npm view '@cairul/pdk@>=0.1.0 <1.0.0' version --json > "$RUNNER_TEMP/pdk.json" 2> "$RUNNER_TEMP/pdk.err" || {
+            if grep -q 'E404' "$RUNNER_TEMP/pdk.err"; then exit 0; fi
+            cat "$RUNNER_TEMP/pdk.err" >&2
             exit 1
           }
-          if jq -e 'type == "string" or (type == "array" and length > 0)' "$RUNNER_TEMP/kit.json" >/dev/null; then
+          if jq -e 'type == "string" or (type == "array" and length > 0)' "$RUNNER_TEMP/pdk.json" >/dev/null; then
             echo 'published=true' >> "$GITHUB_OUTPUT"
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: steps.kit.outputs.published != 'true'
+        if: steps.pdk.outputs.published != 'true'
         with:
-          repository: CairulMCP/cairul
-          ref: '49db9ba9ab2edee5c5800b7559c3f0711c24a848'
+          repository: cairul-hq/cairul
+          ref: 'fc61d921f9218e507f3e0dbedfdafb131f7c6799'
           path: .cairul-ci/core
-          sparse-checkout: packages/plugin-kit
+          sparse-checkout: packages/pdk
           persist-credentials: false
       - name: Install dependencies
         env:
-          KIT_PUBLISHED: ${{ steps.kit.outputs.published }}
+          PDK_PUBLISHED: ${{ steps.pdk.outputs.published }}
         run: |
-          if [[ "$KIT_PUBLISHED" == 'true' ]]; then
+          if [[ "$PDK_PUBLISHED" == 'true' ]]; then
             npm install --ignore-scripts --no-package-lock
           else
-            archive="$(npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP" ./.cairul-ci/core/packages/plugin-kit)"
+            archive="$(npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP" ./.cairul-ci/core/packages/pdk)"
             npm install --ignore-scripts --no-save --no-package-lock "$RUNNER_TEMP/$archive"
           fi
       - run: npm run build

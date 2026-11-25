@@ -130,5 +130,5 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_ACCESS: ${{ vars.NPM_ACCESS || 'public' }}
         run: |
-          npm view '@cairul/plugin-kit@>=0.1.0 <1.0.0' version --json | jq -e 'type == "string" or (type == "array" and length > 0)' >/dev/null
+          npm view '@cairul/pdk@>=0.1.0 <1.0.0' version --json | jq -e 'type == "string" or (type == "array" and length > 0)' >/dev/null
           node scripts/npm-release.mjs publish "$RUNNER_TEMP/cairul-release"

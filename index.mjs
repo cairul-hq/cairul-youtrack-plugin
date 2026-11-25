@@ -9,7 +9,7 @@ import {
   target,
   text,
   verdict,
-} from '@cairul/plugin-kit';
+} from '@cairul/pdk';
 
 export default function youtrack(options) {
   const api = connection(options, {
