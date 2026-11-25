@@ -28,6 +28,7 @@ jobs:
     if: >-
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
        github.event.workflow_run.head_repository.full_name == github.repository &&
        github.event.workflow_run.conclusion == 'success') ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
@@ -50,9 +51,17 @@ jobs:
             echo "::error::Use a full commit SHA from main."
             exit 1
           fi
-          gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yaml/runs" \
-            -f branch=main -f event=push -f status=success -f head_sha="$APPROVED_SHA" \
-            --jq '.total_count' | grep -Eq '^[1-9][0-9]*$'
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            runs="$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yaml/runs" \
+              -f event=push -f head_sha="$APPROVED_SHA" -F per_page=100)"
+            if ! jq -e --arg sha "$APPROVED_SHA" '
+              any(.workflow_runs[]; .head_sha == $sha and .head_branch == "main"
+                and .event == "push" and .status == "completed" and .conclusion == "success")
+            ' <<< "$runs" >/dev/null; then
+              echo "::error::The specified commit needs successful push CI on main."
+              exit 1
+            fi
+          fi
           main_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
           if [[ "$main_sha" == "$APPROVED_SHA" ]]; then
             echo 'current=true' >> "$GITHUB_OUTPUT"
