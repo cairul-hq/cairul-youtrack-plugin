@@ -1,0 +1,61 @@
+name: Bootstrap npm 0.1.0
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: bootstrap-npm-0.1.0
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish 0.1.0 with npm provenance
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: npm
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    env:
+      HUSKY: '0'
+    steps:
+      - name: Verify successful main CI for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yaml/runs" \
+            -f event=push -f head_sha="$GITHUB_SHA" -F per_page=100 |
+            jq -e --arg sha "$GITHUB_SHA" '
+              any(.workflow_runs[]; .head_sha == $sha and .head_branch == "main"
+                and .event == "push" and .status == "completed" and .conclusion == "success")
+            ' >/dev/null
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Verify bootstrap package versions
+        run: >-
+          node -e 'for (const path of ["."]) { if (require("./" + path + "/package.json").version !== "0.1.0") process.exit(1); }'
+      - name: Pack npm archives
+        run: node scripts/npm-release.mjs pack "$RUNNER_TEMP/cairul-bootstrap" --all
+      - name: Publish to npm with provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_ACCESS: public
+          NPM_CONFIG_PROVENANCE: 'true'
+        run: node scripts/npm-release.mjs publish "$RUNNER_TEMP/cairul-bootstrap"
